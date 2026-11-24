@@ -1,0 +1,33 @@
+appId: com.tosto.desktop
+productName: Tosto
+copyright: Tosto
+directories:
+  output: release
+  buildResources: build
+files:
+  - main.cjs
+  - preload.cjs
+  - web/**
+  - package.json
+asar: true
+# Ссылки tosto://... нужны, чтобы после входа через Google браузер возвращал пользователя в приложение.
+protocols:
+  - name: Tosto
+    schemes: [tosto]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  artifactName: Tosto-Setup-${version}.${ext}
+mac:
+  category: public.app-category.social-networking
+  target:
+    - target: dmg
+      arch: [arm64, x64]
+  artifactName: Tosto-${version}-${arch}.${ext}
+  # Без платного аккаунта Apple Developer подписи нет: см. DESKTOP.md
+  identity: null
