@@ -67,6 +67,12 @@ jobs:
             echo "::warning::Нет google-services.json в корне репозитория, пуш-уведомления в этой сборке работать не будут."
           fi
 
+      - name: Номер версии (чтобы APK ставился как обновление)
+        run: |
+          sed -i "s/versionCode [0-9]*/versionCode ${{ github.run_number }}/" android/app/build.gradle
+          sed -i "s/versionName \"[^\"]*\"/versionName \"1.${{ github.run_number }}\"/" android/app/build.gradle
+          grep -n "versionCode\|versionName" android/app/build.gradle
+
       - name: Иконка и заставка
         continue-on-error: true
         run: npx --yes @capacitor/assets generate --android
@@ -97,6 +103,7 @@ jobs:
               --key-pass env:KEY_PASSWORD \
               --out ../tosto.apk "$RUNNER_TEMP/aligned.apk"
           else
+            echo "::warning::Нет ключа подписи: debug-ключ меняется при каждой сборке, и APK придётся ставить заново. См. make-keystore.yml."
             echo "Ключа подписи нет, собираю debug-APK"
             ./gradlew assembleDebug --no-daemon
             cp app/build/outputs/apk/debug/app-debug.apk ../tosto.apk

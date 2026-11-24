@@ -40,6 +40,7 @@ import { useEdgeSwipeBack } from "@/lib/swipeBack";
 import { addUnread, clearUnread, useUnreadCounts } from "@/lib/unread";
 import { useProfileViewer } from "@/lib/profileView";
 import { db } from "@/lib/untyped";
+import { RoleBadge } from "./RoleBadge";
 import { lastSeenLabel, useOnlineIds, usePresence } from "@/lib/presence";
 import { activityText, useChatActivity, type Activity } from "@/lib/activity";
 
@@ -1425,8 +1426,9 @@ export function Chats({
               >
                 <UserAvatar name={chatTitle(activeChat, meId)} url={chatAvatarUrl(activeChat, meId)} size="w-10 h-10" />
                 <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-[16px] leading-tight text-foreground truncate">
-                    {chatTitle(activeChat, meId)}
+                  <p className="flex items-center gap-1 font-semibold text-[16px] leading-tight text-foreground">
+                    <span className="truncate">{chatTitle(activeChat, meId)}</span>
+                    {otherMember && <RoleBadge userId={otherMember.id} compact />}
                   </p>
                   <p className="text-[13px] truncate">
                     {headerActivity ? (

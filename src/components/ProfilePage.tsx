@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth";
 import { countLabel } from "@/lib/format";
 import { useProfileViewer } from "@/lib/profileView";
 import { lastSeenLabel, usePresence } from "@/lib/presence";
+import { RoleBadge } from "./RoleBadge";
 import { POST_SELECT, fetchMyReactions, mapPosts, usePostActions, type PostRow } from "@/lib/posts";
 import { UserAvatar } from "./UserAvatar";
 import { ImageViewer } from "./ImageViewer";
@@ -361,7 +362,10 @@ export function ProfilePage({
                   </div>
                 </div>
 
-                <h1 className="mt-3 font-display text-xl font-bold text-foreground break-words">{profile.display_name}</h1>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <h1 className="font-display text-xl font-bold text-foreground break-words">{profile.display_name}</h1>
+                  <RoleBadge userId={profile.id} />
+                </div>
                 <p className="text-sm text-pulse">@{profile.handle}</p>
                 {!isMe && (
                   <span
