@@ -412,7 +412,7 @@ const Bubble = memo(function Bubble({ m, mine, isGroup, sender, first, last, fre
           isImage ? "p-[3px]" : "px-3 py-1.5"
         } ${
           mine
-            ? `bg-gradient-to-br from-primary to-[oklch(0.6_0.14_245)] text-primary-foreground ${last ? "rounded-br-[5px]" : ""}`
+            ? `bg-primary text-primary-foreground ${last ? "rounded-br-[5px]" : ""}`
             : `bg-surface-2 text-foreground ${last ? "rounded-bl-[5px]" : ""}`
         } ${pending ? "opacity-75" : ""}`}
       >

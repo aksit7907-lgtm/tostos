@@ -287,7 +287,7 @@ function AppShell() {
                       haptic("light");
                       setShowNewPost(true);
                     }}
-                    className="fab-offset fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_10px_24px_-6px_rgba(42,171,238,0.55)] sm:right-[max(1rem,calc(50%-21rem))]"
+                    className="fab-offset fixed right-4 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-[0_10px_24px_-6px_rgba(52,211,153,0.35)] sm:right-[max(1rem,calc(50%-21rem))]"
                   >
                     <Pencil className="h-6 w-6" />
                   </motion.button>

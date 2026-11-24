@@ -10,17 +10,17 @@ export function Logo({ className = "w-9 h-9", animated = false }: LogoProps) {
     <svg viewBox="0 0 64 64" className={className} fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Tosto">
       <defs>
         <linearGradient id="tosto-noir-bg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#35A9EC" />
-          <stop offset="1" stopColor="#1A6FB5" />
+          <stop stopColor="#1C1E22" />
+          <stop offset="1" stopColor="#060607" />
         </linearGradient>
         <linearGradient id="tosto-noir-rim" x1="6" y1="6" x2="58" y2="58" gradientUnits="userSpaceOnUse">
           <stop stopColor="#FFFFFF" stopOpacity="0.85" />
           <stop offset="0.5" stopColor="#71717A" stopOpacity="0.25" />
-          <stop offset="1" stopColor="#BFE4FA" stopOpacity="0.9" />
+          <stop offset="1" stopColor="#34D399" stopOpacity="0.9" />
         </linearGradient>
         <linearGradient id="tosto-noir-mark" x1="18" y1="18" x2="46" y2="44" gradientUnits="userSpaceOnUse">
           <stop stopColor="#FFFFFF" />
-          <stop offset="1" stopColor="#DCEEFB" />
+          <stop offset="1" stopColor="#A1A1AA" />
         </linearGradient>
       </defs>
 

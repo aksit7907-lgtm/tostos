@@ -96,6 +96,13 @@ function FollowList({ userId, kind, onClose }: { userId: string; kind: ListKind;
   );
 }
 
+function postsWord(n: number) {
+  const m10 = n % 10;
+  const m100 = n % 100;
+  const word = m10 === 1 && m100 !== 11 ? "пост" : m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14) ? "поста" : "постов";
+  return `${countLabel(n)} ${word}`;
+}
+
 export function ProfilePage({
   userId,
   onClose,
@@ -226,7 +233,9 @@ export function ProfilePage({
 
   const name = profile?.display_name ?? "Профиль";
   const since = profile?.created_at
-    ? new Date(profile.created_at).toLocaleDateString("ru-RU", { month: "long", year: "numeric" })
+    ? new Date(profile.created_at)
+        .toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" })
+        .replace(/^\d+\s*/, "") // «24 ноября 2026 г.» → «ноября 2026 г.», в родительном падеже для «с …»
     : null;
 
   const statItems: { label: string; value: number; onClick?: () => void }[] = [
@@ -254,7 +263,7 @@ export function ProfilePage({
           )}
           <div className={`min-w-0 flex-1 ${embedded ? "pl-2" : ""}`}>
             <h2 className="font-display text-base font-semibold text-foreground truncate">{embedded ? "Профиль" : name}</h2>
-            {profile && !embedded && <p className="text-xs text-muted-foreground">{countLabel(stats.posts)} постов</p>}
+            {profile && !embedded && <p className="text-xs text-muted-foreground">{postsWord(stats.posts)}</p>}
           </div>
           {embedded && isMe && (
             <motion.button
@@ -317,7 +326,7 @@ export function ProfilePage({
                 )}
               </div>
 
-              <div className="px-5">
+              <div className="relative z-10 px-5">
                 <div className="-mt-11 flex items-end justify-between gap-3">
                   <button
                     type="button"

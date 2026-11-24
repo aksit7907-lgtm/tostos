@@ -85,7 +85,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { title: "Tosto — Мессенджер и лента" },
       { name: "description", content: "Tosto — минималистичный чёрный мессенджер и социальная лента в реальном времени." },
       { name: "author", content: "Tosto" },
-      { name: "theme-color", content: "#17212b" },
+      { name: "theme-color", content: "#0a0a0a" },
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-title", content: "Tosto" },

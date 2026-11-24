@@ -154,7 +154,7 @@ export function ImageCropper({
             value={zoom}
             onChange={(e) => onSlider(Number(e.target.value))}
             aria-label="Масштаб"
-            className="h-1 flex-1 cursor-pointer accent-[oklch(0.75_0.13_238)]"
+            className="h-1 flex-1 cursor-pointer accent-[oklch(0.8_0.16_162)]"
           />
           <span className="text-xs">+</span>
         </div>
