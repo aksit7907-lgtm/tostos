@@ -13,7 +13,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "build:mobile": "vite build --config vite.config.mobile.ts && node scripts/prepare-mobile.mjs",
-    "cap:sync": "npm run build:mobile && npx cap sync android"
+    "cap:sync": "npm run build:mobile && npx cap sync android",
+    "desktop:prepare": "npm run build:mobile && node scripts/prepare-desktop.mjs",
+    "desktop:dev": "npm run desktop:prepare && cd desktop && npm install && npm start"
   },
   "overrides": {
     "rolldown": "1.2.1",

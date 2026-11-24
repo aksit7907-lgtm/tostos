@@ -1,0 +1,14 @@
+# Веб-версия Tosto на Netlify: сайт собирается как статический SPA (тот же, что в мобильном приложении).
+# Переменные VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY, VITE_SUPABASE_PROJECT_ID
+# задаются в Netlify → Site configuration → Environment variables.
+[build]
+  command = "npm install && npm run build:mobile"
+  publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
