@@ -14,6 +14,7 @@ import { installBackButton, useBackHandler } from "@/lib/backStack";
 import { NewPostModal } from "@/components/NewPostModal";
 import { AuthGate } from "@/components/AuthGate";
 import { registerPush } from "@/lib/push";
+import { startPresence } from "@/lib/presence";
 import { ProfileModal } from "@/components/ProfileModal";
 import { UserAvatar } from "@/components/UserAvatar";
 import { useAuth } from "@/lib/auth";
@@ -216,6 +217,12 @@ function AppShell() {
     });
     return () => cleanup?.();
   }, [userId, setView]);
+
+  // «В сети» / «был в сети»: Realtime Presence + время последнего визита в профиле.
+  useEffect(() => {
+    if (!userId) return;
+    return startPresence(userId);
+  }, [userId]);
 
   // Нативная среда: динамическая высота WebView, клавиатура и события возврата из фона.
   useEffect(() => installNativeExperience(), []);

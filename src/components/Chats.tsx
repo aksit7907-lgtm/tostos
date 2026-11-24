@@ -21,6 +21,11 @@ import {
   ChevronDown,
   CheckCheck,
   Clock,
+  Copy,
+  Pencil,
+  Pin,
+  PinOff,
+  Reply,
 } from "lucide-react";
 import type { ChatItem, ChatRow, Message, Profile } from "@/types";
 import { supabase } from "@/integrations/supabase/client";
@@ -34,6 +39,9 @@ import { UserAvatar, nameHue } from "./UserAvatar";
 import { useEdgeSwipeBack } from "@/lib/swipeBack";
 import { addUnread, clearUnread, useUnreadCounts } from "@/lib/unread";
 import { useProfileViewer } from "@/lib/profileView";
+import { db } from "@/lib/untyped";
+import { lastSeenLabel, useOnlineIds, usePresence } from "@/lib/presence";
+import { activityText, useChatActivity, type Activity } from "@/lib/activity";
 
 function msgTime(iso: string) {
   return new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
@@ -54,6 +62,111 @@ type MembershipRow = {
   chat_id: string;
   profiles: Profile | null;
 };
+
+/** Поля, добавленные миграцией supabase/chat_features.sql. */
+type MessageX = Message & {
+  reply_to_id?: string | null;
+  edited_at?: string | null;
+  pinned_at?: string | null;
+};
+
+const isTextMsg = (m: Message) => !m.kind || m.kind === "text";
+
+function ActivityText({ text }: { text: string }) {
+  return (
+    <span>
+      {text}
+      <span className="typing-dots" aria-hidden="true">
+        <i />
+        <i />
+        <i />
+      </span>
+    </span>
+  );
+}
+
+/* ───────────── Меню сообщения: ответить, копировать, закрепить, изменить ───────────── */
+
+function MessageMenu({
+  m,
+  mine,
+  onClose,
+  onReply,
+  onEdit,
+  onPin,
+}: {
+  m: MessageX | null;
+  mine: boolean;
+  onClose: () => void;
+  onReply: (m: MessageX) => void;
+  onEdit: (m: MessageX) => void;
+  onPin: (m: MessageX) => void;
+}) {
+  useBackHandler(!!m, onClose, 26);
+  const pinned = !!m?.pinned_at;
+  const items = m
+    ? [
+        { key: "reply", label: "Ответить", icon: Reply, run: () => onReply(m) },
+        ...(isTextMsg(m)
+          ? [
+              {
+                key: "copy",
+                label: "Копировать",
+                icon: Copy,
+                run: () => {
+                  navigator.clipboard?.writeText(m.body).catch(() => undefined);
+                },
+              },
+            ]
+          : []),
+        { key: "pin", label: pinned ? "Открепить" : "Закрепить", icon: pinned ? PinOff : Pin, run: () => onPin(m) },
+        ...(mine && isTextMsg(m) ? [{ key: "edit", label: "Изменить", icon: Pencil, run: () => onEdit(m) }] : []),
+      ]
+    : [];
+  return (
+    <AnimatePresence>
+      {m && (
+        <motion.div
+          key="menu"
+          className="fixed inset-0 z-[60] flex items-end justify-center bg-black/55 sm:items-center sm:p-4"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          transition={{ duration: 0.15 }}
+          onClick={onClose}
+        >
+          <motion.div
+            initial={{ y: 40, opacity: 0 }}
+            animate={{ y: 0, opacity: 1 }}
+            exit={{ y: 40, opacity: 0 }}
+            transition={{ type: "spring", stiffness: 420, damping: 36 }}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full overflow-hidden rounded-t-3xl border border-border bg-surface-1 pb-[env(safe-area-inset-bottom)] sm:max-w-xs sm:rounded-3xl"
+          >
+            <p className="line-clamp-2 border-b border-border px-5 py-3 text-[13px] text-muted-foreground">
+              {previewOf(m)}
+            </p>
+            {items.map((it) => (
+              <button
+                key={it.key}
+                type="button"
+                onClick={() => {
+                  haptic("light");
+                  onClose();
+                  it.run();
+                }}
+                className="tap flex w-full items-center gap-3.5 px-5 py-3.5 text-[15px] text-foreground"
+              >
+                <it.icon className="h-[19px] w-[19px] text-pulse" />
+                {it.label}
+              </button>
+            ))}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 /* ───────────── Окно «Новый чат / Новая группа» ───────────── */
 
@@ -316,12 +429,16 @@ const ChatListRow = memo(function ChatListRow({
   meId,
   active,
   unread,
+  online,
+  typing,
   onOpen,
 }: {
   chat: ChatItem;
   meId: string;
   active: boolean;
   unread: number;
+  online: boolean;
+  typing: string | null;
   onOpen: (id: string) => void;
 }) {
   const title = chatTitle(chat, meId);
@@ -333,7 +450,12 @@ const ChatListRow = memo(function ChatListRow({
         active ? "sm:bg-pulse/10" : ""
       }`}
     >
-      <UserAvatar name={title} url={chatAvatarUrl(chat, meId)} size="w-[54px] h-[54px]" className="text-base" />
+      <span className="relative shrink-0">
+        <UserAvatar name={title} url={chatAvatarUrl(chat, meId)} size="w-[54px] h-[54px]" className="text-base" />
+        {online && (
+          <span className="absolute bottom-0 right-0 h-[15px] w-[15px] rounded-full border-2 border-background bg-pulse" />
+        )}
+      </span>
       <div className="flex-1 min-w-0 self-stretch flex flex-col justify-center pr-4 border-b border-border">
         <div className="flex items-center gap-2">
           <span className="flex-1 min-w-0 flex items-center gap-1.5 font-semibold text-[16px] text-foreground">
@@ -347,8 +469,8 @@ const ChatListRow = memo(function ChatListRow({
           )}
         </div>
         <div className="flex items-center gap-2 mt-0.5">
-          <span className="flex-1 min-w-0 truncate text-[14px] text-muted-foreground">
-            {chat.last_message ?? "Нет сообщений"}
+          <span className={`flex-1 min-w-0 truncate text-[14px] ${typing ? "text-pulse" : "text-muted-foreground"}`}>
+            {typing ? <ActivityText text={typing} /> : (chat.last_message ?? "Нет сообщений")}
           </span>
           {unread > 0 && (
             <span className="shrink-0 min-w-[22px] h-[22px] px-1.5 rounded-full bg-pulse text-primary-foreground text-[12px] font-semibold flex items-center justify-center tabular-nums">
@@ -380,26 +502,68 @@ function ChatListSkeleton() {
 /* ───────────── Сообщение ───────────── */
 
 type BubbleProps = {
-  m: Message;
+  m: MessageX;
   mine: boolean;
   isGroup: boolean;
   sender?: Profile;
   first: boolean;
   last: boolean;
   fresh: boolean;
+  /** undefined: это не ответ; null: исходное сообщение ещё не загружено. */
+  reply?: MessageX | null;
+  replyName: string;
+  flash: boolean;
+  onMenu: (m: Message) => void;
+  onReply: (m: Message) => void;
+  onJump: (id: string) => void;
 };
 
-const Bubble = memo(function Bubble({ m, mine, isGroup, sender, first, last, fresh }: BubbleProps) {
-  const isText = !m.kind || m.kind === "text";
+const Bubble = memo(function Bubble({
+  m,
+  mine,
+  isGroup,
+  sender,
+  first,
+  last,
+  fresh,
+  reply,
+  replyName,
+  flash,
+  onMenu,
+  onReply,
+  onJump,
+}: BubbleProps) {
+  const isText = isTextMsg(m);
   const isImage = m.kind === "image";
   const pending = m.id.startsWith("tmp-");
   const senderName = sender?.display_name ?? "Участник";
   const metaTone = mine ? "text-primary-foreground/65" : "text-muted-foreground";
+  const edited = !!m.edited_at;
+  const pinned = !!m.pinned_at;
   const status = mine ? (
     pending ? <Clock className="h-3 w-3" /> : <CheckCheck className="h-3.5 w-3.5" />
   ) : null;
+  const extras = (
+    <>
+      {pinned && <Pin className="h-3 w-3" />}
+      {edited && <span>изм.</span>}
+    </>
+  );
+  const spacer = (mine ? 68 : 50) + (edited ? 30 : 0) + (pinned ? 15 : 0);
+
+  // Долгое нажатие открывает меню, свайп влево — ответ.
+  const press = useRef<{ x: number; y: number; timer: number } | null>(null);
+  const clearPress = () => {
+    if (press.current) {
+      window.clearTimeout(press.current.timer);
+      press.current = null;
+    }
+  };
+  useEffect(() => () => clearPress(), []);
+
   return (
     <div
+      id={`msg-${m.id}`}
       className={`flex items-end gap-2 ${mine ? "justify-end" : "justify-start"} ${first ? "mt-2" : "mt-0.5"} ${
         fresh ? "anim-pop-in" : ""
       }`}
@@ -407,27 +571,81 @@ const Bubble = memo(function Bubble({ m, mine, isGroup, sender, first, last, fre
     >
       {!mine && isGroup &&
         (last ? <UserAvatar name={senderName} url={sender?.avatar_url} size="w-8 h-8" /> : <div className="w-8 shrink-0" />)}
-      <div
-        className={`relative max-w-[82%] sm:max-w-[70%] rounded-[18px] text-[15px] leading-[1.35] shadow-[0_1px_1px_rgba(0,0,0,0.18)] ${
+      <motion.div
+        drag="x"
+        dragDirectionLock
+        dragConstraints={{ left: 0, right: 0 }}
+        dragElastic={{ left: 0.4, right: 0 }}
+        dragSnapToOrigin
+        onDragStart={clearPress}
+        onDragEnd={(_, info) => {
+          if (info.offset.x < -56 && !pending) {
+            haptic("light");
+            onReply(m);
+          }
+        }}
+        onPointerDown={(e) => {
+          if (pending || (e.pointerType === "mouse" && e.button !== 0)) return;
+          clearPress();
+          press.current = {
+            x: e.clientX,
+            y: e.clientY,
+            timer: window.setTimeout(() => {
+              press.current = null;
+              window.getSelection()?.removeAllRanges();
+              onMenu(m);
+            }, 420),
+          };
+        }}
+        onPointerMove={(e) => {
+          const p = press.current;
+          if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) clearPress();
+        }}
+        onPointerUp={clearPress}
+        onPointerCancel={clearPress}
+        onPointerLeave={clearPress}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          clearPress();
+          if (!pending) onMenu(m);
+        }}
+        className={`relative max-w-[82%] sm:max-w-[70%] rounded-[18px] text-[15px] leading-[1.35] shadow-[0_1px_1px_rgba(0,0,0,0.18)] transition-shadow [-webkit-touch-callout:none] ${
           isImage ? "p-[3px]" : "px-3 py-1.5"
         } ${
           mine
             ? `bg-primary text-primary-foreground ${last ? "rounded-br-[5px]" : ""}`
             : `bg-surface-2 text-foreground ${last ? "rounded-bl-[5px]" : ""}`
-        } ${pending ? "opacity-75" : ""}`}
+        } ${pending ? "opacity-75" : ""} ${flash ? "ring-2 ring-pulse/70" : ""}`}
       >
         {!mine && isGroup && first && (
           <p className={`text-[13px] font-semibold mb-0.5 truncate ${isImage ? "px-2 pt-1" : ""}`} style={{ color: `oklch(0.78 0.13 ${nameHue(senderName)})` }}>
             {senderName}
           </p>
         )}
+        {reply !== undefined && (
+          <button
+            type="button"
+            onClick={() => m.reply_to_id && onJump(m.reply_to_id)}
+            className={`mb-1 block w-full rounded-lg border-l-2 py-0.5 pl-2 pr-1.5 text-left text-[13px] leading-tight ${
+              isImage ? "mx-1.5 mt-1 !w-[calc(100%-12px)]" : ""
+            } ${mine ? "border-primary-foreground/70 bg-primary-foreground/10" : "border-pulse bg-pulse/10"}`}
+          >
+            <span className={`block truncate font-semibold ${mine ? "text-primary-foreground" : "text-pulse"}`}>
+              {replyName}
+            </span>
+            <span className={`block truncate ${mine ? "text-primary-foreground/75" : "text-muted-foreground"}`}>
+              {reply ? previewOf(reply) : "Показать сообщение"}
+            </span>
+          </button>
+        )}
         {isText ? (
           <>
             <p className="selectable whitespace-pre-line break-words">
               <RichText text={m.body} onPrimary={mine} />
-              <span className={`inline-block ${mine ? "w-[68px]" : "w-[50px]"}`} aria-hidden="true" />
+              <span className="inline-block" style={{ width: spacer }} aria-hidden="true" />
             </p>
             <span className={`absolute right-2.5 bottom-1 flex items-center gap-1 text-[11px] tabular-nums ${metaTone}`}>
+              {extras}
               {msgTime(m.created_at)}
               {status}
             </span>
@@ -436,6 +654,7 @@ const Bubble = memo(function Bubble({ m, mine, isGroup, sender, first, last, fre
           <div className="relative">
             <MessageMedia m={m} mine={mine} />
             <span className="pointer-events-none absolute bottom-1.5 right-1.5 flex items-center gap-1 rounded-full bg-black/45 px-2 py-0.5 text-[11px] tabular-nums text-white">
+              {extras}
               {msgTime(m.created_at)}
               {status}
             </span>
@@ -444,12 +663,13 @@ const Bubble = memo(function Bubble({ m, mine, isGroup, sender, first, last, fre
           <>
             <MessageMedia m={m} mine={mine} />
             <div className={`mt-1 flex items-center justify-end gap-1 text-[11px] tabular-nums ${metaTone}`}>
+              {extras}
               {msgTime(m.created_at)}
               {status}
             </div>
           </>
         )}
-      </div>
+      </motion.div>
     </div>
   );
 });
@@ -499,10 +719,12 @@ export function Chats({
   /** Вкладка «Чаты» сейчас на экране. Экран остаётся смонтированным, чтобы чаты не перезагружались. */
   visible?: boolean;
 } = {}) {
-  const { user } = useAuth();
+  const { user, profile: meProfile } = useAuth();
   const { openProfile } = useProfileViewer();
   const meId = user?.id ?? "";
+  const meName = meProfile?.display_name ?? "Участник";
   const unreadCounts = useUnreadCounts();
+  const onlineIds = useOnlineIds();
 
   const [chats, setChats] = useState<ChatItem[]>([]);
   const [messagesByChat, setMessagesByChat] = useState<Record<string, Message[]>>({});
@@ -524,11 +746,22 @@ export function Chats({
   useBackHandler(creating, () => setCreating(false), 25);
   useBackHandler(mobileOpen && visible, () => setMobileOpen(false), 20);
   const [sendError, setSendError] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<MessageX | null>(null);
+  const [editing, setEditing] = useState<MessageX | null>(null);
+  const [menuMsg, setMenuMsg] = useState<MessageX | null>(null);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const [pins, setPins] = useState<Record<string, MessageX[]>>({});
+  const [pinIdx, setPinIdx] = useState(0);
 
   const chatsRef = useRef<ChatItem[]>([]);
   chatsRef.current = chats;
   const messagesRef = useRef(messagesByChat);
   messagesRef.current = messagesByChat;
+  const hasOlderRef = useRef(hasOlder);
+  hasOlderRef.current = hasOlder;
+  const editingRef = useRef<MessageX | null>(null);
+  editingRef.current = editing;
+  const typingSentRef = useRef(0);
   const stateRef = useRef({ activeId, mobileOpen, visible });
   stateRef.current = { activeId, mobileOpen, visible };
 
@@ -642,6 +875,68 @@ export function Chats({
     [loadChats],
   );
 
+  /** Закреплённые сообщения диалога (могут быть старше загруженной страницы). */
+  const loadPins = useCallback(async (chatId: string) => {
+    const { data, error } = await db
+      .from("messages")
+      .select("*")
+      .eq("chat_id", chatId)
+      .not("pinned_at", "is", null)
+      .order("pinned_at", { ascending: false })
+      .limit(20);
+    if (error) return;
+    setPins((prev) => ({ ...prev, [chatId]: (data ?? []) as MessageX[] }));
+  }, []);
+
+  /** Сообщение изменилось (правка, закрепление): обновляем список, закрепы и превью в списке чатов. */
+  const applyUpdate = useCallback((m: MessageX) => {
+    setMessagesByChat((prev) => {
+      const cur = prev[m.chat_id];
+      if (!cur) return prev;
+      let hit = false;
+      const next = cur.map((x) => {
+        if (x.id !== m.id) return x;
+        hit = true;
+        return { ...x, ...m };
+      });
+      return hit ? { ...prev, [m.chat_id]: next } : prev;
+    });
+    setPins((prev) => {
+      const rest = (prev[m.chat_id] ?? []).filter((x) => x.id !== m.id);
+      const list = m.pinned_at
+        ? [m, ...rest].sort((a, b) => new Date(b.pinned_at!).getTime() - new Date(a.pinned_at!).getTime())
+        : rest;
+      return { ...prev, [m.chat_id]: list };
+    });
+    setChats((prev) =>
+      prev.map((c) => (c.id === m.chat_id && c.last_message_at === m.created_at ? { ...c, last_message: previewOf(m) } : c)),
+    );
+  }, []);
+
+  /** Прокрутка к сообщению (ответ, закреп); при необходимости подгружает историю. */
+  const jumpTo = useCallback(
+    async (id: string) => {
+      const chatId = stateRef.current.activeId;
+      if (!chatId) return;
+      const has = () => !!messagesRef.current[chatId]?.some((x) => x.id === id);
+      let tries = 0;
+      while (!has() && hasOlderRef.current[chatId] && tries < 8) {
+        await loadOlder();
+        tries++;
+        await new Promise((r) => setTimeout(r, 60));
+      }
+      const el = document.getElementById(`msg-${id}`);
+      if (!el) {
+        setSendError("Сообщение не найдено");
+        return;
+      }
+      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      setFlashId(id);
+      window.setTimeout(() => setFlashId((cur) => (cur === id ? null : cur)), 1400);
+    },
+    [loadOlder],
+  );
+
   const isViewing = useCallback((chatId: string) => {
     const st = stateRef.current;
     if (!st.visible || st.activeId !== chatId) return false;
@@ -667,6 +962,9 @@ export function Chats({
         }
         applyMessage(m, true);
       })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "messages" }, (payload) => {
+        applyUpdate(payload.new as MessageX);
+      })
       .on(
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "chat_members", filter: `user_id=eq.${meId}` },
@@ -676,17 +974,24 @@ export function Chats({
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [meId, loadChats, applyMessage, isViewing]);
+  }, [meId, loadChats, applyMessage, applyUpdate, isViewing]);
 
   useEffect(() => {
-    if (activeId) loadMessages(activeId);
-  }, [activeId, loadMessages]);
+    if (activeId) {
+      loadMessages(activeId);
+      loadPins(activeId);
+    }
+  }, [activeId, loadMessages, loadPins]);
 
   // Сменили диалог: прокрутка начинается заново, с низа.
   useLayoutEffect(() => {
     lastIdRef.current = undefined;
     stickRef.current = true;
     setShowDown(false);
+    if (editingRef.current) setDraft("");
+    setEditing(null);
+    setReplyTo(null);
+    setPinIdx(0);
   }, [activeId]);
 
   // Открыли диалог и смотрим на него: непрочитанных нет.
@@ -721,12 +1026,43 @@ export function Chats({
     else if (last.sender_id === meId || stickRef.current) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
   }, [messages, activeId, meId]);
 
+  const chatIds = useMemo(() => chats.map((c) => c.id), [chats]);
+  const { activity, sendActivity } = useChatActivity(chatIds, meId, meName);
+
   const [attachOpen, setAttachOpen] = useState(false);
   const [recording, setRecording] = useState(false);
   const [uploading, setUploading] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const isTouch = typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches;
+
+  // «записывает голосовое…» пока идёт запись.
+  useEffect(() => {
+    if (!recording || !activeId) return;
+    const chatId = activeId;
+    sendActivity(chatId, "voice");
+    const t = window.setInterval(() => sendActivity(chatId, "voice"), 3000);
+    return () => {
+      window.clearInterval(t);
+      sendActivity(chatId, "stop");
+    };
+  }, [recording, activeId, sendActivity]);
+
+  function notifyTyping(value: string) {
+    if (!activeId || editing) return;
+    if (!value.trim()) {
+      if (typingSentRef.current) {
+        typingSentRef.current = 0;
+        sendActivity(activeId, "stop");
+      }
+      return;
+    }
+    const now = Date.now();
+    if (now - typingSentRef.current > 3000) {
+      typingSentRef.current = now;
+      sendActivity(activeId, "typing");
+    }
+  }
 
   // Поле ввода растёт вместе с текстом, как в Telegram.
   useEffect(() => {
@@ -741,13 +1077,19 @@ export function Chats({
     if (!activeId || !meId) return;
     setSendError(null);
     setUploading(kind === "voice" ? "Отправка голосового…" : kind === "image" ? "Отправка фото…" : "Отправка файла…");
+    const chatId = activeId;
+    const replyId = replyTo?.id ?? null;
+    const act: Activity = kind === "image" ? "photo" : kind === "file" ? "file" : "voice";
+    sendActivity(chatId, act);
+    const actTimer = window.setInterval(() => sendActivity(chatId, act), 3000);
     try {
-      const path = await uploadChatMedia(activeId, blob, name, mime);
-      const { data, error } = await supabase
+      const path = await uploadChatMedia(chatId, blob, name, mime);
+      const { data, error } = await db
         .from("messages")
         .insert({
-          chat_id: activeId,
+          chat_id: chatId,
           sender_id: meId,
+          ...(replyId ? { reply_to_id: replyId } : {}),
           kind,
           body: "",
           media_path: path,
@@ -760,11 +1102,14 @@ export function Chats({
         .single();
       if (error) throw new Error(error.message);
       playSound("send");
+      if (replyId) setReplyTo(null);
       applyMessage(data as Message, true);
     } catch (e) {
       playSound("error");
       setSendError("Не удалось отправить: " + (e instanceof Error ? e.message : "ошибка"));
     } finally {
+      window.clearInterval(actTimer);
+      sendActivity(chatId, "stop");
       setUploading(null);
     }
   }
@@ -786,25 +1131,43 @@ export function Chats({
 
   /** Сообщение появляется сразу, до ответа сервера; при ошибке возвращается в поле ввода. */
   async function send() {
+    if (editing) {
+      void saveEdit();
+      return;
+    }
     const text = draft.trim();
     if (!text || !activeId || !meId) return;
     const chatId = activeId;
+    const reply = replyTo;
+    const replyId = reply?.id ?? null;
     haptic("light");
     setDraft("");
+    setReplyTo(null);
     setSendError(null);
+    typingSentRef.current = 0;
+    sendActivity(chatId, "stop");
     const tmpId = `tmp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     applyMessage(
-      { id: tmpId, chat_id: chatId, sender_id: meId, body: text, created_at: new Date().toISOString(), kind: "text" },
+      {
+        id: tmpId,
+        chat_id: chatId,
+        sender_id: meId,
+        body: text,
+        created_at: new Date().toISOString(),
+        kind: "text",
+        reply_to_id: replyId,
+      } as Message,
       true,
     );
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("messages")
-      .insert({ chat_id: chatId, sender_id: meId, body: text })
+      .insert({ chat_id: chatId, sender_id: meId, body: text, ...(replyId ? { reply_to_id: replyId } : {}) })
       .select()
       .single();
     if (error || !data) {
       setMessagesByChat((prev) => ({ ...prev, [chatId]: (prev[chatId] ?? []).filter((m) => m.id !== tmpId) }));
       setDraft((d) => d || text);
+      if (reply) setReplyTo((r) => r ?? reply);
       setSendError(error?.message ?? "Не удалось отправить");
       playSound("error");
       return;
@@ -819,6 +1182,71 @@ export function Chats({
       return { ...prev, [chatId]: next };
     });
   }
+
+  /* ───── Ответ, редактирование, закрепление ───── */
+
+  const startReply = useCallback((m: Message) => {
+    if (m.id.startsWith("tmp-")) return;
+    if (editingRef.current) setDraft("");
+    setEditing(null);
+    setReplyTo(m as MessageX);
+    window.setTimeout(() => taRef.current?.focus(), 30);
+  }, []);
+
+  const startEdit = useCallback((m: MessageX) => {
+    setReplyTo(null);
+    setEditing(m);
+    setDraft(m.body);
+    window.setTimeout(() => taRef.current?.focus(), 50);
+  }, []);
+
+  function cancelContext() {
+    if (editing) setDraft("");
+    setEditing(null);
+    setReplyTo(null);
+  }
+
+  async function saveEdit() {
+    const target = editing;
+    const text = draft.trim().slice(0, 4000);
+    if (!target || !text) return;
+    if (text === target.body) {
+      cancelContext();
+      return;
+    }
+    haptic("light");
+    setEditing(null);
+    setDraft("");
+    const { error } = await db.rpc("edit_message", { p_message_id: target.id, p_body: text });
+    if (error) {
+      setEditing(target);
+      setDraft(text);
+      setSendError("Не удалось изменить: " + error.message);
+      playSound("error");
+      return;
+    }
+    applyUpdate({ ...target, body: text, edited_at: new Date().toISOString() });
+  }
+
+  const togglePin = useCallback(
+    async (m: MessageX) => {
+      const next = !m.pinned_at;
+      const { error } = await db.rpc("set_message_pin", { p_message_id: m.id, p_pinned: next });
+      if (error) {
+        setSendError(`Не удалось ${next ? "закрепить" : "открепить"}: ${error.message}`);
+        playSound("error");
+        return;
+      }
+      applyUpdate({ ...m, pinned_at: next ? new Date().toISOString() : null });
+    },
+    [applyUpdate],
+  );
+
+  const openMenu = useCallback((m: Message) => {
+    if (m.id.startsWith("tmp-")) return;
+    haptic("light");
+    setMenuMsg(m as MessageX);
+  }, []);
 
   async function leaveGroup(chatId: string) {
     if (!window.confirm("Выйти из группы?")) return;
@@ -871,6 +1299,40 @@ export function Chats({
   }, [activeChat]);
   const rows = useMemo(() => buildRows(messages), [messages]);
   const otherMember = activeChat?.type === "direct" ? activeChat.members.find((m) => m.id !== meId) : undefined;
+  const presence = usePresence(otherMember?.id);
+  const byId = useMemo(() => new Map(messages.map((m) => [m.id, m as MessageX])), [messages]);
+  const pinList = activeId ? (pins[activeId] ?? []) : [];
+  const pin = pinList.length ? pinList[Math.min(pinIdx, pinList.length - 1)] : undefined;
+  const renderBubble = (m: MessageX, first: boolean, last: boolean) => {
+    const rep = m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : undefined;
+    const replyName = rep
+      ? rep.sender_id === meId
+        ? "Вы"
+        : (memberById.get(rep.sender_id)?.display_name ?? "Участник")
+      : "Сообщение";
+    return (
+      <Bubble
+        key={m.id}
+        m={m}
+        mine={m.sender_id === meId}
+        isGroup={activeChat?.type === "group"}
+        sender={memberById.get(m.sender_id)}
+        first={first}
+        last={last}
+        fresh={freshId === m.id}
+        reply={rep}
+        replyName={replyName}
+        flash={flashId === m.id}
+        onMenu={openMenu}
+        onReply={startReply}
+        onJump={jumpTo}
+      />
+    );
+  };
+  const headerActivity =
+    activeChat && activeId
+      ? activityText(Object.values(activity[activeId] ?? {}), activeChat.type === "group")
+      : null;
 
   return (
     <div className="relative flex-1 flex h-full min-h-0 overflow-hidden">
@@ -927,6 +1389,8 @@ export function Chats({
                   meId={meId}
                   active={activeId === c.id}
                   unread={unreadCounts[c.id] ?? 0}
+                  online={c.type === "direct" && c.members.some((x) => x.id !== meId && onlineIds.has(x.id))}
+                  typing={activityText(Object.values(activity[c.id] ?? {}), c.type === "group")}
                   onOpen={openChat}
                 />
               </div>
@@ -964,8 +1428,18 @@ export function Chats({
                   <p className="font-semibold text-[16px] leading-tight text-foreground truncate">
                     {chatTitle(activeChat, meId)}
                   </p>
-                  <p className="text-[13px] text-muted-foreground truncate">
-                    {activeChat.type === "group" ? `${activeChat.members.length} участн.` : `@${otherMember?.handle ?? ""}`}
+                  <p className="text-[13px] truncate">
+                    {headerActivity ? (
+                      <span className="text-pulse">
+                        <ActivityText text={headerActivity} />
+                      </span>
+                    ) : activeChat.type === "group" ? (
+                      <span className="text-muted-foreground">{activeChat.members.length} участн.</span>
+                    ) : presence.online ? (
+                      <span className="text-pulse">в сети</span>
+                    ) : (
+                      <span className="text-muted-foreground">{lastSeenLabel(presence.lastSeen)}</span>
+                    )}
                   </p>
                 </div>
               </button>
@@ -980,6 +1454,46 @@ export function Chats({
                 </button>
               )}
             </div>
+
+            <AnimatePresence initial={false}>
+              {pin && (
+                <motion.div
+                  key="pinbar"
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="overflow-hidden border-b border-border bg-background/95"
+                >
+                  <div className="flex items-center gap-1 pl-3 pr-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        haptic("light");
+                        void jumpTo(pin.id);
+                        if (pinList.length > 1) setPinIdx((i) => (i + 1) % pinList.length);
+                      }}
+                      className="tap flex min-w-0 flex-1 items-center gap-2.5 py-1.5 text-left"
+                    >
+                      <Pin className="h-4 w-4 shrink-0 text-pulse" />
+                      <span className="min-w-0 flex-1 border-l-2 border-pulse pl-2.5">
+                        <span className="block text-[12px] font-semibold leading-tight text-pulse">
+                          Закреплённое сообщение{pinList.length > 1 ? ` #${Math.min(pinIdx, pinList.length - 1) + 1}` : ""}
+                        </span>
+                        <span className="block truncate text-[14px] leading-tight text-foreground/90">{previewOf(pin)}</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void togglePin(pin)}
+                      aria-label="Открепить"
+                      className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground"
+                    >
+                      <PinOff className="h-[18px] w-[18px]" />
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
 
             <div
               ref={scrollerRef}
@@ -1025,16 +1539,7 @@ export function Chats({
                         </span>
                       </div>
                     ) : (
-                      <Bubble
-                        key={r.m.id}
-                        m={r.m}
-                        mine={r.m.sender_id === meId}
-                        isGroup={activeChat.type === "group"}
-                        sender={memberById.get(r.m.sender_id)}
-                        first={r.first}
-                        last={r.last}
-                        fresh={freshId === r.m.id}
-                      />
+                      renderBubble(r.m as MessageX, r.first, r.last)
                     ),
                   )}
                 </>
@@ -1088,6 +1593,44 @@ export function Chats({
                   e.target.value = "";
                 }}
               />
+
+              <AnimatePresence initial={false}>
+                {(replyTo || editing) && (
+                  <motion.div
+                    key="ctx"
+                    initial={{ height: 0, opacity: 0 }}
+                    animate={{ height: "auto", opacity: 1 }}
+                    exit={{ height: 0, opacity: 0 }}
+                    className="overflow-hidden"
+                  >
+                    <div className="flex items-center gap-2.5 px-2 pb-2">
+                      {editing ? (
+                        <Pencil className="h-5 w-5 shrink-0 text-pulse" />
+                      ) : (
+                        <Reply className="h-5 w-5 shrink-0 text-pulse" />
+                      )}
+                      <div className="min-w-0 flex-1 border-l-2 border-pulse pl-2.5">
+                        <p className="truncate text-[13px] font-semibold leading-tight text-pulse">
+                          {editing
+                            ? "Редактирование"
+                            : `Ответ ${replyTo!.sender_id === meId ? "себе" : (memberById.get(replyTo!.sender_id)?.display_name ?? "")}`.trim()}
+                        </p>
+                        <p className="truncate text-[14px] leading-tight text-muted-foreground">
+                          {previewOf((editing ?? replyTo)!)}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={cancelContext}
+                        aria-label="Отмена"
+                        className="press flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-muted-foreground"
+                      >
+                        <X className="h-[18px] w-[18px]" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {recording ? (
                 <VoiceRecorderBar
@@ -1152,6 +1695,7 @@ export function Chats({
                       onChange={(e) => {
                         typingSound(draft, e.target.value);
                         setDraft(e.target.value.slice(0, 4000));
+                        notifyTyping(e.target.value);
                       }}
                       onFocus={() => {
                         window.setTimeout(() => {
@@ -1226,6 +1770,14 @@ export function Chats({
         )}
       </div>
 
+      <MessageMenu
+        m={menuMsg}
+        mine={menuMsg?.sender_id === meId}
+        onClose={() => setMenuMsg(null)}
+        onReply={startReply}
+        onEdit={startEdit}
+        onPin={(m) => void togglePin(m)}
+      />
       <NewChatModal open={creating} meId={meId} onClose={() => setCreating(false)} onCreated={handleCreated} />
     </div>
   );

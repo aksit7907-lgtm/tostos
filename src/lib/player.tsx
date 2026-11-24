@@ -11,7 +11,11 @@ type Ctx = {
   play: (t: PlayerTrack) => void;
   toggle: () => void;
   stop: () => void;
+  /** Перемотка на секунду `sec` (YouTube и SoundCloud). */
+  seek: (sec: number) => void;
 };
+
+type Progress = { position: number; duration: number };
 
 const PlayerContext = createContext<Ctx>({
   track: null,
@@ -20,9 +24,14 @@ const PlayerContext = createContext<Ctx>({
   play: () => {},
   toggle: () => {},
   stop: () => {},
+  seek: () => {},
 });
 
+/** Позиция и длительность отдельным контекстом: секундные обновления не перерисовывают остальное приложение. */
+const ProgressContext = createContext<Progress>({ position: 0, duration: 0 });
+
 export const usePlayer = () => useContext(PlayerContext);
+export const usePlayerProgress = () => useContext(ProgressContext);
 
 /**
  * Глобальный плеер: скрытый iframe живёт здесь, а не на странице профиля,
@@ -32,6 +41,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [track, setTrack] = useState<PlayerTrack | null>(null);
   const [playing, setPlaying] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [progress, setProgress] = useState<Progress>({ position: 0, duration: 0 });
   const frameRef = useRef<HTMLIFrameElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -47,12 +57,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     frameRef.current?.contentWindow?.postMessage(JSON.stringify(msg), "*");
   }, []);
 
+  const setPos = useCallback((position?: number, duration?: number) => {
+    setProgress((p) => {
+      const nextPos = position !== undefined && Number.isFinite(position) ? Math.max(0, position) : p.position;
+      const nextDur = duration !== undefined && Number.isFinite(duration) && duration > 0 ? duration : p.duration;
+      return nextPos === p.position && nextDur === p.duration ? p : { position: nextPos, duration: nextDur };
+    });
+  }, []);
+
   const play = useCallback(
     (t: PlayerTrack) => {
       if (!embedFor(t.url)?.audioOnly) return;
       setTrack(t);
       setPlaying(true);
       setFailed(false);
+      setProgress({ position: 0, duration: 0 });
       clearTimer();
       timer.current = setTimeout(() => {
         setFailed(true);
@@ -67,7 +86,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setTrack(null);
     setPlaying(false);
     setFailed(false);
+    setProgress({ position: 0, duration: 0 });
   }, [clearTimer]);
+
+  const seek = useCallback(
+    (sec: number) => {
+      if (!track) return;
+      const s = Math.max(0, sec);
+      if (kind === "youtube") send({ event: "command", func: "seekTo", args: [s, true] });
+      else send({ method: "seekTo", value: Math.round(s * 1000) });
+      setPos(s);
+    },
+    [track, kind, send, setPos],
+  );
 
   const toggle = useCallback(() => {
     if (!track) return;
@@ -104,6 +135,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           setPlaying(false);
           return;
         }
+        if (data.info && typeof data.info === "object" && typeof data.info.currentTime === "number") {
+          setPos(data.info.currentTime, data.info.duration);
+        }
         const st = data.info?.playerState ?? (data.event === "onStateChange" ? data.info : undefined);
         if (st === 1) {
           clearTimer();
@@ -117,6 +151,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           clearTimer();
           setFailed(false);
           setPlaying(true);
+          send({ method: "getDuration" });
+        } else if (data.method === "getDuration") {
+          setPos(undefined, Number(data.value) / 1000);
+        } else if (data.method === "playProgress") {
+          const cur = Number(data.value?.currentPosition) / 1000;
+          const rel = Number(data.value?.relativePosition);
+          setPos(cur, rel > 0.01 ? cur / rel : undefined);
         } else if (data.method === "pause" || data.method === "finish") {
           setPlaying(false);
         }
@@ -124,7 +165,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [track, kind, clearTimer]);
+  }, [track, kind, clearTimer, send, setPos]);
 
   useEffect(() => clearTimer, [clearTimer]);
 
@@ -132,17 +173,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (kind === "youtube") {
       send({ event: "listening", id: 1, channel: "widget" });
     } else if (kind === "soundcloud") {
-      for (const ev of ["play", "pause", "finish"]) send({ method: "addEventListener", value: ev });
+      for (const ev of ["play", "pause", "finish", "playProgress"]) send({ method: "addEventListener", value: ev });
     }
   }
 
   const value = useMemo(
-    () => ({ track, playing, failed, play, toggle, stop }),
-    [track, playing, failed, play, toggle, stop],
+    () => ({ track, playing, failed, play, toggle, stop, seek }),
+    [track, playing, failed, play, toggle, stop, seek],
   );
 
   return (
     <PlayerContext.Provider value={value}>
+      <ProgressContext.Provider value={progress}>
       {children}
 
       {track && embed && (
@@ -163,7 +205,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
           {/* Мини-плеер: виден на любом экране, пока трек не закрыт. */}
           <div className="fixed inset-x-3 z-40 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] md:bottom-4 md:left-auto md:right-4 md:w-80">
-            <div className="noir-glass border border-border rounded-2xl pl-2 pr-1.5 py-1.5 flex items-center gap-2.5 shadow-noir">
+            <div className="noir-glass border border-border rounded-2xl pl-2 pr-1.5 py-1.5 flex items-center gap-2.5 shadow-noir relative overflow-hidden">
               <button
                 type="button"
                 onClick={toggle}
@@ -187,10 +229,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               >
                 <X className="w-4 h-4" />
               </button>
+              {progress.duration > 0 && (
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px] bg-border">
+                  <div
+                    className="h-full bg-pulse"
+                    style={{ width: `${Math.min(100, (progress.position / progress.duration) * 100)}%` }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         </>
       )}
+      </ProgressContext.Provider>
     </PlayerContext.Provider>
   );
 }

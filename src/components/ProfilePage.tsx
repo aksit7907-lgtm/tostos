@@ -7,8 +7,9 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/lib/auth";
 import { countLabel } from "@/lib/format";
 import { useProfileViewer } from "@/lib/profileView";
+import { lastSeenLabel, usePresence } from "@/lib/presence";
 import { POST_SELECT, fetchMyReactions, mapPosts, usePostActions, type PostRow } from "@/lib/posts";
-import { UserAvatar, nameHue } from "./UserAvatar";
+import { UserAvatar } from "./UserAvatar";
 import { ImageViewer } from "./ImageViewer";
 import { FollowButton } from "./FollowButton";
 import { TrackBadge } from "./TrackBadge";
@@ -121,6 +122,7 @@ export function ProfilePage({
   const tabLayoutId = useId(); // у вкладки профиля и у страницы чужого профиля свои анимации индикатора
   const meId = user?.id ?? "";
   const isMe = userId === meId;
+  const presence = usePresence(isMe ? null : userId);
 
   const [profile, setProfile] = useState<Profile | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -298,17 +300,8 @@ export function ProfilePage({
               animate={{ opacity: 1, y: 0 }}
               className="border-b border-border pb-4"
             >
-              <div
-                className="relative h-36 sm:h-48 w-full overflow-hidden bg-surface-2"
-                style={
-                  profile.banner_url
-                    ? undefined
-                    : {
-                        backgroundImage: `linear-gradient(135deg, oklch(0.5 0.12 ${nameHue(profile.display_name)}), oklch(0.32 0.09 ${(nameHue(profile.display_name) + 50) % 360}))`,
-                      }
-                }
-              >
-                {profile.banner_url && (
+              {profile.banner_url && (
+                <div className="relative h-36 sm:h-48 w-full overflow-hidden bg-surface-2">
                   <button
                     type="button"
                     aria-label="Открыть баннер"
@@ -323,11 +316,11 @@ export function ProfilePage({
                       className="h-full w-full object-cover"
                     />
                   </button>
-                )}
-              </div>
+                </div>
+              )}
 
-              <div className="relative z-10 px-5">
-                <div className="-mt-11 flex items-end justify-between gap-3">
+              <div className={`relative z-10 px-5 ${profile.banner_url ? "" : "pt-4"}`}>
+                <div className={`${profile.banner_url ? "-mt-11" : ""} flex items-end justify-between gap-3`}>
                   <button
                     type="button"
                     disabled={!profile.avatar_url}
@@ -370,6 +363,16 @@ export function ProfilePage({
 
                 <h1 className="mt-3 font-display text-xl font-bold text-foreground break-words">{profile.display_name}</h1>
                 <p className="text-sm text-pulse">@{profile.handle}</p>
+                {!isMe && (
+                  <span
+                    className={`mt-1.5 inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                      presence.online ? "bg-pulse/15 text-pulse" : "bg-surface-2 text-muted-foreground"
+                    }`}
+                  >
+                    {presence.online && <span className="h-1.5 w-1.5 rounded-full bg-pulse" />}
+                    {presence.online ? "в сети" : lastSeenLabel(presence.lastSeen)}
+                  </span>
+                )}
                 {profile.bio && (
                   <p className="selectable mt-2.5 text-[15px] leading-relaxed text-foreground/90 whitespace-pre-line break-words">
                     <RichText text={profile.bio} />

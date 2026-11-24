@@ -40,6 +40,9 @@ export type Message = {
   media_mime?: string | null;
   media_size?: number | null;
   media_duration?: number | null;
+  reply_to_id?: string | null;
+  edited_at?: string | null;
+  pinned_at?: string | null;
 };
 
 export type Post = {
